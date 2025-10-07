@@ -113,16 +113,19 @@ if uploaded is not None:
             c = col.lower()
             if "keyword" in c:
                 col_map['keyword'] = col
-            elif "search" in c:
+            elif "avg. monthly searches" in c:
                 col_map['search_volume'] = col
-            elif "competition" in c:
+            elif c.startswith("competition") and "indexed" not in c:
                 col_map['competition'] = col
-            elif "bid" in c or "cpc" in c:
-                col_map['cpc'] = col
+            elif "top of page bid (low range)" in c:
+                col_map['cpc_low'] = col
+            elif "top of page bid (high range)" in c:
+                col_map['cpc_high'] = col
         kw_col = col_map.get('keyword')
         vol_col = col_map.get('search_volume')
         comp_col = col_map.get('competition')
-        cpc_col = col_map.get('cpc')
+        cpc_low_col = col_map.get('cpc_low')
+        cpc_high_col = col_map.get('cpc_high')
     else:
         st.warning("Could not auto-detect columns — please rename to standard Google Ads format.")
         st.stop()
@@ -183,7 +186,9 @@ if uploaded is not None:
         except Exception:
             return np.nan
 
-    out["cpc_raw"] = df[cpc_col].apply(parse_cpc)
+    cpc_low = df[cpc_low_col].apply(parse_cpc) if cpc_low_col else pd.Series(np.nan, index=df.index)
+    cpc_high = df[cpc_high_col].apply(parse_cpc) if cpc_high_col else pd.Series(np.nan, index=df.index)
+    out["cpc_raw"] = np.nanmean(np.vstack([cpc_low, cpc_high]), axis=0)
 
     out["product"] = out["keyword"].apply(infer_product)
 
@@ -239,9 +244,6 @@ if uploaded is not None:
     st.subheader("Product-level summary")
     st.dataframe(prod_agg, use_container_width=True, hide_index=True)
 
-    # -----------------------------
-    # Visualization Section
-    # -----------------------------
     st.subheader("📊 Keyword Viability Visualizations")
 
     top_products_chart = (
@@ -271,9 +273,6 @@ if uploaded is not None:
     col1.altair_chart(top_products_chart, use_container_width=True)
     col2.altair_chart(difficulty_chart, use_container_width=True)
 
-    # -----------------------------
-    # Downloads
-    # -----------------------------
     csv_keywords = out.to_csv(index=False).encode("utf-8")
     csv_products = prod_agg.to_csv(index=False).encode("utf-8")
 
