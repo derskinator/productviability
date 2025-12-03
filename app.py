@@ -1,4 +1,3 @@
-import math
 import io
 import re
 from typing import List
@@ -45,18 +44,23 @@ def infer_product(keyword: str) -> str:
     words = k.split()
     if len(words) == 1:
         return k
+
     if "tea" in k:
         if "green" in k:
             return "Green Tea"
         if "ginger" in k or "turmeric" in k:
             return "Ginger/Turmeric Tea"
         return "Tea"
+
     if "coffee" in k:
         return "Coffee"
+
     if "shower" in k or "rinsekit" in k:
         return "Portable Shower"
+
     if "tumbler" in k or "bottle" in k:
         return "Drinkware"
+
     return words[0].capitalize()
 
 
@@ -66,6 +70,7 @@ def bucket(score: float) -> str:
     if score >= 0.5:
         return "Moderate"
     return "Hard"
+
 
 # -----------------------------
 # App
@@ -79,6 +84,10 @@ st.write(
 
 uploaded = st.file_uploader("Upload Google Ads Keyword Planner CSV", type=["csv"])
 
+
+# -----------------------------
+# Sidebar Weights
+# -----------------------------
 with st.sidebar:
     st.header("Scoring Weights")
     w_vol = st.slider("Search volume weight", 0.0, 1.0, 0.35, 0.05)
@@ -94,15 +103,19 @@ with st.sidebar:
     )
     brand_terms = [b.strip().lower() for b in brand_csv.split(",") if b.strip()]
 
-# -----------------------------
-# Detect Google Ads column names
-# -----------------------------
 
+# -----------------------------
+# Detect Google Ads columns
+# -----------------------------
 def detect_google_ads_format(df: pd.DataFrame):
     cols = {c.lower(): c for c in df.columns}
     required = ["keyword", "avg. monthly searches", "competition"]
     return all(any(req in c for c in cols.keys()) for req in required)
 
+
+# -----------------------------
+# Main Processing
+# -----------------------------
 if uploaded is not None:
     df = pd.read_csv(uploaded)
 
@@ -130,6 +143,9 @@ if uploaded is not None:
         st.warning("Could not auto-detect columns — please rename to standard Google Ads format.")
         st.stop()
 
+    # -----------------------------
+    # Parsing functions
+    # -----------------------------
     out = pd.DataFrame()
     out["keyword"] = df[kw_col].astype(str)
 
@@ -216,6 +232,9 @@ if uploaded is not None:
 
     out["difficulty_bucket"] = out["viability_score"].apply(bucket)
 
+    # -----------------------------
+    # Product-level summary
+    # -----------------------------
     prod_agg = (
         out.groupby("product")
         .agg(
@@ -231,6 +250,9 @@ if uploaded is not None:
         .sort_values("avg_score", ascending=False)
     )
 
+    # -----------------------------
+    # Display Results
+    # -----------------------------
     st.subheader("Keyword-level results")
     st.dataframe(
         out[[
@@ -273,6 +295,9 @@ if uploaded is not None:
     col1.altair_chart(top_products_chart, use_container_width=True)
     col2.altair_chart(difficulty_chart, use_container_width=True)
 
+    # -----------------------------
+    # CSV Export
+    # -----------------------------
     csv_keywords = out.to_csv(index=False).encode("utf-8")
     csv_products = prod_agg.to_csv(index=False).encode("utf-8")
 
@@ -288,3 +313,52 @@ if uploaded is not None:
         file_name="product_viability_summary.csv",
         mime="text/csv",
     )
+
+    # ============================================================
+    # === NEO4J GRAPH DATABASE INTEGRATION (added section) =======
+    # ============================================================
+
+    from graph_store import GraphStore
+    import os
+
+    st.subheader("📡 Save Results to Neo4j Graph Database")
+
+    with st.expander("Neo4j Connection Settings"):
+        neo4j_uri = st.text_input(
+            "Neo4j URI",
+            value=os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        )
+        neo4j_user = st.text_input(
+            "Neo4j Username",
+            value=os.getenv("NEO4J_USER", "neo4j")
+        )
+        neo4j_password = st.text_input(
+            "Neo4j Password",
+            type="password",
+            value=os.getenv("NEO4J_PASSWORD", "example")
+        )
+
+    if st.button("Save to Neo4j"):
+        try:
+            store = GraphStore(neo4j_uri, neo4j_user, neo4j_password)
+
+            # WARNING: resets DB
+            store.reset()
+
+            # Insert product nodes
+            store.upsert_products(prod_agg)
+
+            # Insert keyword nodes
+            keyword_cols = [
+                "product", "keyword", "search_volume_raw", "competition_raw",
+                "cpc_raw", "is_branded", "intent_score",
+                "viability_score", "difficulty_bucket"
+            ]
+            store.upsert_keywords(out[keyword_cols])
+
+            store.close()
+            st.success("✔ Data successfully saved to Neo4j!")
+
+        except Exception as e:
+            st.error(f"❌ Failed to save to Neo4j: {e}")
+
